@@ -127,6 +127,25 @@ namespace dxvk {
 
     void bindResourceView(const uint32_t slot, const Rc<DxvkImageView>& imageView, const Rc<DxvkBufferView>& bufferView);
 
+    // Must live entirely within one CS-thread raster draw; game bindings are restored on exit.
+    class ScopedRasterizedUiTextures {
+    public:
+      ScopedRasterizedUiTextures(RtxContext& context, uint32_t firstSlot, uint32_t textureMask);
+      ~ScopedRasterizedUiTextures();
+      ScopedRasterizedUiTextures(const ScopedRasterizedUiTextures&) = delete;
+      ScopedRasterizedUiTextures& operator=(const ScopedRasterizedUiTextures&) = delete;
+
+    private:
+      struct Binding {
+        uint32_t slot;
+        Rc<DxvkImageView> imageView;
+        Rc<DxvkBufferView> bufferView;
+      };
+      RtxContext& m_context;
+      std::array<Binding, 16> m_bindings;
+      uint32_t m_count = 0;
+    };
+
     void getDenoiseArgs(NrdArgs& outPrimaryDirectNrdArgs, NrdArgs& outPrimaryIndirectNrdArgs, NrdArgs& outSecondaryNrdArgs);
     void updateRaytraceArgsConstantBuffer(Resources::RaytracingOutput& rtOutput, const VkExtent3D& downscaledExtent, const VkExtent3D& targetExtent);
 

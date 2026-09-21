@@ -1,6 +1,9 @@
 #pragma once
 
 #include "d3d9_state.h"
+// NV-DXVK start: UI injection lifetime
+#include "d3d9_rtx_injection_state.h"
+// NV-DXVK end
 #include "../dxvk/dxvk_buffer.h"
 #include "../util/util_threadpool.h"
 
@@ -39,6 +42,12 @@ namespace dxvk {
 
     RTX_OPTION("rtx", bool, orthographicIsUI, true, "When enabled, draw calls that are orthographic will be considered as UI.");
     RTX_OPTION("rtx", bool, preTransformedVerticesIsUI, false, "When enabled, draw calls using pre-transformed (screen-space) vertices will be considered as UI. This is typical for D3D8/D3D9 games that render UI with RHW vertices.");
+    // NV-DXVK start: rasterized UI texture replacement
+    uint32_t GetRasterizedUiTextureMask(PrepareDrawFlags flags) const;
+    // NV-DXVK end
+    // NV-DXVK start: UI before scene geometry
+    RTX_OPTION("rtx.injection", bool, deferUiUntilGeometry, false, "Rasterizes UI without triggering RTX until D3D9 geometry has been submitted in the current frame. Supports menus that resume gameplay after UI in the same frame. Leave disabled for scenes supplied exclusively through the Remix API.");
+    // NV-DXVK end
     RTX_OPTION("rtx", bool, allowCubemaps, false, "When enabled, cubemaps from the game are processed through Remix, but they may not render correctly.");
     RTX_OPTION("rtx", bool, useVertexCapture, true, "When enabled, injects code into the original vertex shader to capture final shaded vertex positions.  Is useful for games using simple vertex shaders, that still also set the fixed function transform matrices.");
     RTX_OPTION("rtx", bool, useVertexCapturedNormals, true, "When enabled, vertex normals are read from the input assembler and used in raytracing.  This doesn't always work as normals can be in any coordinate space, but can help sometimes.");
@@ -216,7 +225,9 @@ namespace dxvk {
     uint32_t m_maxBone = 0;
 
     const bool m_enableDrawCallConversion;
-    bool m_rtxInjectTriggered = false;
+    // NV-DXVK start: UI injection lifetime
+    D3D9RtxInjectionState m_injectionState;
+    // NV-DXVK end
     bool m_forceGeometryCopy = false;
     DWORD m_texcoordIndex = 0;
 
@@ -281,7 +292,7 @@ namespace dxvk {
 
     bool checkBoundTextureCategory(const fast_unordered_set& textureCategory) const;
 
-    bool isRenderingUI();
+    bool isRenderingUI() const;
 
     Future<SkinningData> processSkinning(const RasterGeometry& geoData);
 

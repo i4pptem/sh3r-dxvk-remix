@@ -38,6 +38,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
     XXH64_hash_t samplerHash1;
     uint32_t alphaTestCompareOp;
     uint32_t tFactor;
+    float effectEmission;
     uint32_t blendEnableBlending;
     uint32_t blendColorSrcFactor;
     uint32_t blendColorDstFactor;
@@ -55,7 +56,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
     uint8_t textureAlphaOperation;
     uint8_t isTextureFactorBlend;
     uint8_t isVertexColorBakedLighting;
-    uint8_t padding[7];
+    uint8_t padding[3];
   };
 
   LegacyMaterialIdentityHashData data{};
@@ -65,6 +66,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
   data.samplerHash1 = samplers[1].ptr() != nullptr ? samplers[1]->info().calculateHash() : kEmptyHash;
   data.alphaTestCompareOp = static_cast<uint32_t>(alphaTestCompareOp);
   data.tFactor = tFactor;
+  data.effectEmission = effectEmission;
   data.blendEnableBlending = static_cast<uint32_t>(blendMode.enableBlending);
   data.blendColorSrcFactor = static_cast<uint32_t>(blendMode.colorSrcFactor);
   data.blendColorDstFactor = static_cast<uint32_t>(blendMode.colorDstFactor);
@@ -90,6 +92,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
       &LegacyMaterialIdentityHashData::samplerHash1,
       &LegacyMaterialIdentityHashData::alphaTestCompareOp,
       &LegacyMaterialIdentityHashData::tFactor,
+      &LegacyMaterialIdentityHashData::effectEmission,
       &LegacyMaterialIdentityHashData::blendEnableBlending,
       &LegacyMaterialIdentityHashData::blendColorSrcFactor,
       &LegacyMaterialIdentityHashData::blendColorDstFactor,

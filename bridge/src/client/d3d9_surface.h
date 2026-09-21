@@ -90,6 +90,9 @@ public:
     return m_desc;
   }
 
+  // Receives a complete packed surface without opening a public lock or uploading it again.
+  HRESULT receiveReadback(const void* data, size_t size, UINT width, UINT height, D3DFORMAT format);
+
 private:
   /*** Lock/Unlock Functionality ***/
   bool m_isBackBuffer;

@@ -21,6 +21,23 @@
 */
 #pragma once
 
+enum class WorldUiBlendMode : uint8_t {
+  Legacy = 0,
+  Alpha = 1,
+  AlphaAdd = 2,
+  Add = 3,
+};
+
+// Surface flags0 bits 4..15: Q4.8 exponent, with zero reserved for identity.
+static uint32_t packWorldUiAlphaExponent(float exponent) {
+  return exponent == 1.0f ? 0u : uint32_t(exponent * 256.0f + 0.5f) << 4;
+}
+
+static float unpackWorldUiAlphaExponent(uint32_t flags) {
+  const uint32_t encoded = (flags >> 4) & 0xfffu;
+  return encoded ? float(encoded) / 256.0f : 1.0f;
+}
+
 enum class BlendType : uint8_t {
   kAlpha = 0,
   kAlphaEmissive = 1,

@@ -146,6 +146,13 @@ bool evaluateOpaqueApproximations(
   const VolumeArgs volumeArgs = cb.volumeArgs;
   const float opacity = opaqueSurfaceMaterialInteraction.opacity;
 
+  if (surface.worldUiBlendMode != WorldUiBlendMode::Legacy)
+  {
+    emissiveRadiance += opaqueSurfaceMaterialInteraction.emissiveRadiance * incomingRadianceAttenuation;
+    outgoingRadianceAttenuation *= 1.0f - opacity;
+    return true;
+  }
+
   // Handle lighting approximations
   // Note: This has to be done with macros (unfortunately) due to the dependency on the volumetric radiance cache. Slang
   // sadly does not support the compile time lazy code evaluation to make this any more elegant as far as I know. Currently this
@@ -468,7 +475,7 @@ void resolveVertex<T: IBasePayloadState>(
     // Handle nearly-opaque early out case
 
     // Note: Early out if opacity is set to completely opaque to stop the resolving early.
-    if (opacity >= cb.resolveOpaquenessThreshold)
+    if (opacity >= cb.resolveOpaquenessThreshold && surface.worldUiBlendMode == WorldUiBlendMode::Legacy)
     {
       // Cache if this surface is a POM material for later use
       pomOpaqueSurfaceEncountered = opaqueSurfaceMaterial.hasValidDisplacement();
@@ -838,6 +845,7 @@ void resolveVertexUnorderedParticles<
   float3 alphaColorSum = 0..xxx;
   float alphaWeightSum = 0.0f;
   float alphaTransProd = 1.0f;
+  WorldUiAccumulator worldUi = worldUiAccumulatorCreate();
 #else
   mat4 binnedRadiancesAndAttenuation = mat4(
     vec4(0.0f, 0.0f, 0.0f, 1.0f),
@@ -1047,10 +1055,17 @@ void resolveVertexUnorderedParticles<
 
     float alphaVal = saturate(1.f - currentRadianceAttenuation);
 
-    float3 Ci = src * alphaVal;
-    alphaColorSum  += Ci * w;
-    alphaWeightSum += alphaVal * w;
-    alphaTransProd *= (1.f - alphaVal);
+    if (surface.worldUiBlendMode != WorldUiBlendMode::Legacy)
+    {
+      worldUi.accumulate(surface.worldUiBlendMode, src, currentRadianceAttenuation, w);
+    }
+    else
+    {
+      float3 Ci = src * alphaVal;
+      alphaColorSum  += Ci * w;
+      alphaWeightSum += alphaVal * w;
+      alphaTransProd *= (1.f - alphaVal);
+    }
 #else
     uint lowestIndex;
     float lowestDistance;
@@ -1099,7 +1114,8 @@ void resolveVertexUnorderedParticles<
     emissiveRadiance += alphaAvg * coverage;
   }
 
-  radianceAttenuation *= alphaTransProd;
+  emissiveRadiance += worldUi.radiance();
+  radianceAttenuation *= alphaTransProd * worldUi.transmission;
 #else
   for (uint i = 0; i < 4 ; ++i)
   {
@@ -1183,6 +1199,7 @@ void resolveVertexUnordered<
   float3 alphaColorSum = 0..xxx;
   float alphaWeightSum = 0.0f;
   float alphaTransProd = 1.0f;
+  WorldUiAccumulator worldUi = worldUiAccumulatorCreate();
 #else
   // Note: Initialize bins to completely transparent with no radiance to be added in at an impossibly low distance. This
   // ensures these filler items are pulled out first in sorted order, giving the incoming elements a few iterations to populate
@@ -1484,11 +1501,17 @@ void resolveVertexUnordered<
       // Extinction-based alpha
       float alphaVal = saturate(1.f - currentRadianceAttenuation);
 
-      // premultiplied color
-      float3 Ci = src * alphaVal;
-      alphaColorSum  += Ci * w;
-      alphaWeightSum += alphaVal * w;
-      alphaTransProd *= (1.f - alphaVal);
+      if (surface.worldUiBlendMode != WorldUiBlendMode::Legacy)
+      {
+        worldUi.accumulate(surface.worldUiBlendMode, src, currentRadianceAttenuation, w);
+      }
+      else
+      {
+        float3 Ci = src * alphaVal;
+        alphaColorSum  += Ci * w;
+        alphaWeightSum += alphaVal * w;
+        alphaTransProd *= (1.f - alphaVal);
+      }
 #else
      // Find the lowest item in the bins
       uint lowestIndex;
@@ -1563,7 +1586,8 @@ void resolveVertexUnordered<
     emissiveRadiance += alphaAvg * coverage;
   }
 
-  radianceAttenuation *= alphaTransProd;
+  emissiveRadiance += worldUi.radiance();
+  radianceAttenuation *= alphaTransProd * worldUi.transmission;
 #else
   // Flush the bins by iterating through them and finding the lowest for each
   // Note: This has to be done as there will be remaining items in the bins (up to 4) which need to be accumulated in most cases after

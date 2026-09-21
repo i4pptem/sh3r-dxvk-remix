@@ -85,6 +85,8 @@ d3d9_src = [
   'd3d9_volume.h',
   'd3d9_rtx.cpp',
   'd3d9_rtx.h',
+  'd3d9_rtx_injection_state.h',
+  'd3d9_rtx_ui_policy.h',
   'd3d9_rtx_utils.cpp',
   'd3d9_rtx_utils.h',
   'd3d9_rtx_geometry.cpp',
@@ -109,4 +111,3 @@ d3d9_dll = shared_library('d3d9', d3d9_src, dxvk_version, glsl_generator.process
 d3d9_dep = declare_dependency(
   link_with           : [ d3d9_dll ],
   include_directories : [ dxvk_include_path ])
- 

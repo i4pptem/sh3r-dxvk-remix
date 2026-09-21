@@ -36,6 +36,7 @@
 #include "rtx_camera_manager.h"
 #include "dxvk_cmdlist.h"
 #include "rtx_opacity_micromap_manager.h"
+#include "rtx_world_ui_alpha_curves.h"
 
 namespace dxvk 
 {
@@ -315,6 +316,11 @@ struct IntersectionBillboard {
 //  and the GPU buffers which are required by VK for instancing.
 class InstanceManager : public CommonDeviceObject {
 public:
+  RTX_OPTION_FLAG("rtx.worldUi", bool, explicitBlendModes, false, RtxOptionFlags::InvalidatesDrawcallTranslation,
+    "Uses linear HDR Alpha, SRC_ALPHA/ONE and ONE/ONE blending for legacy World Space UI. Other blend modes retain legacy translation.");
+  RTX_OPTION_FLAG("rtx.worldUi", std::string, textureAlphaCurves, "", RtxOptionFlags::InvalidatesDrawcallTranslation,
+    "Comma-separated textureHash:exponent pairs for explicit World UI Alpha/AlphaAdd. Exponents range from 0.25 to 4; 1 preserves the sampled alpha. Raw alpha testing and Pure Add are unchanged. Example: 0x0123456789ABCDEF:2.2.");
+
   InstanceManager(InstanceManager const&) = delete;
   InstanceManager& operator=(InstanceManager const&) = delete;
 
@@ -420,6 +426,9 @@ private:
   uint64_t m_nextInstanceId = 1;
 
   std::vector<RtInstance*> m_instances; 
+  std::string m_worldUiAlphaCurveConfig;
+  WorldUiAlphaCurves m_worldUiAlphaCurves;
+  float getWorldUiAlphaCurve(const DrawCallState& drawCall);
   uint64_t m_sceneGeneration = 0;
   std::vector<RtInstance*> m_viewModelCandidates;
   uint32_t m_viewModelCandidatesFrameId = kInvalidFrameIndex;

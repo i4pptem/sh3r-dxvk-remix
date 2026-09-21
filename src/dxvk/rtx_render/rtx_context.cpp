@@ -1511,6 +1511,64 @@ namespace dxvk {
 #endif
   }
 
+  RtxContext::ScopedRasterizedUiTextures::ScopedRasterizedUiTextures(
+      RtxContext& context, uint32_t firstSlot, uint32_t textureMask)
+    : m_context(context) {
+    if (!textureMask || !RtxOptions::getEnableReplacementMaterials()) {
+      return;
+    }
+
+    assert((textureMask & ~0xffffu) == 0);
+    for (uint32_t index : bit::BitMask(textureMask)) {
+      const uint32_t slot = firstSlot + index;
+      const Rc<DxvkImageView> original = context.m_rc[slot].imageView;
+      if (original == nullptr || original->info().type != VK_IMAGE_VIEW_TYPE_2D) {
+        continue;
+      }
+
+      const auto material = context.getSceneManager().getAssetReplacer()->getReplacementMaterial(original->image()->getHash());
+      if (!material || material->getType() != MaterialDataType::Opaque) {
+        continue;
+      }
+      const TextureRef& texture = material->getOpaqueMaterialData().getAlbedoOpacityTexture();
+      if (!texture.isValid()) {
+        continue;
+      }
+
+      const bool wasImageEmpty = texture.isImageEmpty();
+      uint32_t textureIndex;
+      context.getSceneManager().trackTexture(texture, textureIndex, true, false);
+      const auto& managedTexture = texture.getManagedTexture();
+      if (managedTexture != nullptr && managedTexture->m_state == ManagedTexture::State::kQueuedForUpload) {
+        // Raster-only menus cannot depend on an RTX scene to submit staged texture uploads.
+        context.spillRenderPass(false);
+        context.getCommonObjects()->getTextureManager().submitTexturesToDeviceLocal(
+          &context, context.m_execBarriers, context.m_execAcquires);
+        context.m_execBarriers.recordCommands(context.m_cmd);
+      }
+      const Rc<DxvkImageView> replacement = texture.getImageView();
+      if (replacement == nullptr || replacement->info().type != VK_IMAGE_VIEW_TYPE_2D) {
+        continue;
+      }
+
+      m_bindings[m_count++] = { slot, original, context.m_rc[slot].bufferView };
+      context.bindResourceView(slot, replacement, nullptr);
+      if (wasImageEmpty) {
+        Logger::info(str::format("[RTX UI] Prepared USD texture for raster: source=", std::hex,
+          original->image()->getHash(), std::dec, " replacement=",
+          replacement->image()->info().extent.width, "x", replacement->image()->info().extent.height));
+      }
+      ONCE(Logger::info("[RTX UI] Applied USD albedo-opacity replacement to a native raster draw."));
+    }
+  }
+
+  RtxContext::ScopedRasterizedUiTextures::~ScopedRasterizedUiTextures() {
+    for (uint32_t index = 0; index < m_count; ++index) {
+      const Binding& binding = m_bindings[index];
+      m_context.bindResourceView(binding.slot, binding.imageView, binding.bufferView);
+    }
+  }
+
   void RtxContext::checkOpacityMicromapSupport() {
     bool isOpacityMicromapSupported = OpacityMicromapManager::checkIsOpacityMicromapSupported(*m_device);
 

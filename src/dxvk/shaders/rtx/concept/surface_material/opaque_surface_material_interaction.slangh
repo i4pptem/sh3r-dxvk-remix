@@ -21,6 +21,8 @@
 */
 #pragma once
 
+#include "rtx/concept/surface_material/world_ui_blending.slangh"
+
 #include "opaque_surface_material_blending.slangh"
 
 // Opaque Surface Material Interaction Constants
@@ -700,7 +702,7 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   if (applyTextureOperations) 
 #endif
   {
-    if (surface.isVertexColorBakedLighting) {
+    if (surface.isVertexColorBakedLighting && surface.worldUiBlendMode == WorldUiBlendMode::Legacy) {
       // "Normalize" vertex color to remove lighting contribution in different vertices.
       // We assume the diffuse term contributes most lighting. Therefore, vertex color = diffuseColor * (N*L).
       // By dividing the vertex color by its largest component, the result is irrelavant to N*L, but proportional to the 
@@ -738,8 +740,11 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
     chooseTextureOperationAlpha(opacity, surface.textureAlphaOperation, textureAlphaArg1, textureAlphaArg2);
     
     // Ensure we perform these opacity calculations after the texture operations have been applied to abledo and alpha.
-    calcOpaqueSurfaceMaterialOpacity(
-      albedo, opacity, surface, opacity, emissiveBlendOverrideInfluence, cb.wboitEnabled);
+    if (surface.worldUiBlendMode == WorldUiBlendMode::Legacy)
+    {
+      calcOpaqueSurfaceMaterialOpacity(
+        albedo, opacity, surface, opacity, emissiveBlendOverrideInfluence, cb.wboitEnabled);
+    }
   }
 
   if (opaqueSurfaceMaterial.flags & OPAQUE_SURFACE_MATERIAL_FLAG_IGNORE_ALPHA_CHANNEL)
@@ -757,6 +762,24 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   // Todo: Disable this for when a sRGB texture is the source of the emissive color.
   emissiveColor = gammaToLinear(emissiveColor);
   
+  float worldUiOpacity = opacity;
+  if (albedoOpacityLoaded && surface.worldUiTextureAlphaExponent != 1.0f &&
+      (surface.worldUiBlendMode == WorldUiBlendMode::Alpha || surface.worldUiBlendMode == WorldUiBlendMode::AlphaAdd) &&
+      !(opaqueSurfaceMaterial.flags & (OPAQUE_SURFACE_MATERIAL_FLAG_IGNORE_ALPHA_CHANNEL |
+                                      OPAQUE_SURFACE_MATERIAL_FLAG_ALPHA_IS_THIN_FILM_THICKNESS)))
+  {
+    const float shapedTextureAlpha = worldUiShapeTextureAlpha(albedoOpacitySample.a, surface.worldUiTextureAlphaExponent);
+    float arg1;
+    float arg2;
+    chooseTextureArgument(arg1, surface.textureAlphaArg1Source, shapedTextureAlpha, surfaceInteraction.vertexColor.a, tFactor.a, shapedTextureAlpha);
+    chooseTextureArgument(arg2, surface.textureAlphaArg2Source, shapedTextureAlpha, surfaceInteraction.vertexColor.a, tFactor.a, 1.0f);
+    chooseTextureOperationAlpha(worldUiOpacity, surface.textureAlphaOperation, arg1, arg2);
+  }
+
+  // Coverage uses unmodified native alpha; only the blend contribution uses the shaped mask.
+  const vec4 worldUiLayer = worldUiBlendLayer(surface.worldUiBlendMode, albedo, worldUiOpacity,
+    worldUiAlphaTest(opacity, AlphaTestType(surface.alphaTestType), surface.alphaTestReferenceValue));
+
   // Apply material modifiers/overrides
   albedo = saturate(albedo * cb.opaqueMaterialArgs.albedoScale + cb.opaqueMaterialArgs.albedoBias);
   
@@ -890,6 +913,14 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
       worldToTangent,
       minimalRayInteraction
     );
+  }
+
+  if (surface.worldUiBlendMode != WorldUiBlendMode::Legacy)
+  {
+    opaqueSurfaceMaterialInteraction.emissiveRadiance = worldUiLayer.rgb;
+    opaqueSurfaceMaterialInteraction.opacity = 1.0f - worldUiLayer.a;
+    opaqueSurfaceMaterialInteraction.albedo = vec3(0.0f);
+    opaqueSurfaceMaterialInteraction.baseReflectivity = vec3(0.0f);
   }
 
   return opaqueSurfaceMaterialInteraction;

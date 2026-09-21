@@ -54,6 +54,16 @@ struct Surface
 
   // flags and properties
 
+  property WorldUiBlendMode worldUiBlendMode
+  {
+    get { return WorldUiBlendMode((data0b.z >> 2) & 3); }
+  }
+
+  property float worldUiTextureAlphaExponent
+  {
+    get { return unpackWorldUiAlphaExponent(uint32_t(data0b.z)); }
+  }
+
   // Note: Potentially temporary flag for "fullbright" rendered things (e.g. the skybox) which should appear emissive-like.
   // This may be able to be determined by some sort of fixed function state in the future, but for now this flag can be used.
   property bool isEmissive

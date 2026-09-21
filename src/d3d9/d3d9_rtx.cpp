@@ -12,8 +12,12 @@
 #include "../util/util_fastops.h"
 #include "../util/util_math.h"
 #include "d3d9_rtx_utils.h"
+// NV-DXVK start: rasterized UI texture replacement
+#include "d3d9_rtx_ui_policy.h"
+// NV-DXVK end
 #include "d3d9_texture.h"
 #include "../dxvk/rtx_render/rtx_terrain_baker.h"
+#include "../dxvk/rtx_render/rtx_effect_material.h"
 
 #include <cassert>
 #include <cstring>
@@ -435,21 +439,28 @@ namespace dxvk {
       return { RtxGeometryStatus::Ignored, false };
     }
 
-    // Only certain draw calls are worth raytracing
-    if (!isPrimitiveSupported(drawContext.PrimitiveType)) {
+    // NV-DXVK start: preserve screen-space UI lines
+    const bool rasterUiLines = rasterizeUiLines(
+      drawContext.PrimitiveType == D3DPT_LINELIST || drawContext.PrimitiveType == D3DPT_LINESTRIP,
+      d3d9State().vertexDecl != nullptr && d3d9State().vertexDecl->TestFlag(D3D9VertexDeclFlag::HasPositionT),
+      m_parent->UseProgrammableVS(), d3d9State().renderStates[D3DRS_ZENABLE]);
+
+    // UI lines use native rasterization, not the triangle-only RT geometry path.
+    if (!isPrimitiveSupported(drawContext.PrimitiveType) && !rasterUiLines) {
       ONCE(Logger::info(str::format("[RTX-Compatibility-Info] Trying to raytrace an unsupported primitive topology [", drawContext.PrimitiveType, "]. Ignoring.")));
       return { RtxGeometryStatus::Ignored, false };
     }
 
-    if (!RtxOptions::enableAlphaTest() && m_parent->IsAlphaTestEnabled()) {
+    if (!rasterUiLines && !RtxOptions::enableAlphaTest() && m_parent->IsAlphaTestEnabled()) {
       ONCE(Logger::info(str::format("[RTX-Compatibility-Info] Raytracing an alpha-tested draw call when alpha-tested objects disabled in RT. Ignoring.")));
       return { RtxGeometryStatus::Ignored, false };
     }
 
-    if (!RtxOptions::enableAlphaBlend() && d3d9State().renderStates[D3DRS_ALPHABLENDENABLE]) {
+    if (!rasterUiLines && !RtxOptions::enableAlphaBlend() && d3d9State().renderStates[D3DRS_ALPHABLENDENABLE]) {
       ONCE(Logger::info(str::format("[RTX-Compatibility-Info] Raytracing an alpha-blended draw call when alpha-blended objects disabled in RT. Ignoring.")));
       return { RtxGeometryStatus::Ignored, false };
     }
+    // NV-DXVK end
     
     if (m_activeOcclusionQueries > 0) {
       ONCE(Logger::info(str::format("[RTX-Compatibility-Info] Trying to raytrace an occlusion query. Ignoring.")));
@@ -478,6 +489,15 @@ namespace dxvk {
     // Ensure present parameters for the swapchain have been cached
     // Note: This assumes that ResetSwapChain has been called at some point before this call, typically done after creating a swapchain.
     assert(m_activePresentParams.has_value());
+
+    // NV-DXVK start: preserve screen-space UI lines
+    if (rasterUiLines) {
+      const bool primaryTarget = s_isDxvkResolutionEnvVarSet ||
+        isRenderTargetPrimary(*m_activePresentParams, d3d9State().renderTargets[kRenderTargetIndex]->GetCommonTexture()->Desc());
+      ONCE(Logger::info("[RTX-Compatibility-Info] Preserving screen-space UI lines in the native raster path."));
+      return { RtxGeometryStatus::Rasterized, primaryTarget };
+    }
+    // NV-DXVK end
 
     // Attempt to detect shadow mask draws and ignore them
     // Conditions: non-textured flood-fill draws into a small quad render target
@@ -567,7 +587,23 @@ namespace dxvk {
     return false;
   }
 
-  bool D3D9Rtx::isRenderingUI() {
+  // NV-DXVK start: rasterized UI texture replacement
+  uint32_t D3D9Rtx::GetRasterizedUiTextureMask(PrepareDrawFlags flags) const {
+    if (!m_enableDrawCallConversion) {
+      return 0;
+    }
+    const bool rasterOnly = (flags & PrepareDrawFlag::OriginalDrawCall) &&
+                            !(flags & PrepareDrawFlag::CommitToRayTracing);
+    const bool positionT = d3d9State().vertexDecl != nullptr &&
+                          d3d9State().vertexDecl->TestFlag(D3D9VertexDeclFlag::HasPositionT);
+    const bool screenSpace = positionT || isRenderingUI();
+    return rasterizedUiTextureMask(rasterOnly, screenSpace,
+      m_parent->m_activeTextures & m_parent->m_psShaderMasks.samplerMask,
+      m_parent->GetActiveRTTextures());
+  }
+  // NV-DXVK end
+
+  bool D3D9Rtx::isRenderingUI() const {
     if (!m_parent->UseProgrammableVS() && orthographicIsUI()) {
       // Here we assume drawcalls with an orthographic projection are UI calls (as this pattern is common, and we can't raytrace these objects).
       const bool isOrthographic = (d3d9State().transforms[GetTransformIndex(D3DTS_PROJECTION)][3][3] == 1.0f);
@@ -587,7 +623,9 @@ namespace dxvk {
     // RTX was injected => treat everything else as rasterized,
     // unless this draw targets a raytraced render target (e.g. render-to-texture
     // in games that draw UI before 3D content).
-    if (m_rtxInjectTriggered) {
+    // NV-DXVK start: UI injection lifetime
+    if (m_injectionState.injected()) {
+    // NV-DXVK end
       bool isRaytracedRenderTarget = false;
       if (RtxOptions::RaytracedRenderTarget::enable()) {
         D3D9CommonTexture* texture = GetCommonTexture(d3d9State().renderTargets[kRenderTargetIndex]->GetBaseTexture());
@@ -614,12 +652,17 @@ namespace dxvk {
     }
 
     if (triggerRtxInjection) {
+      // NV-DXVK start: UI before scene geometry
+      if (!m_injectionState.tryInjectUi(deferUiUntilGeometry())) {
+        ONCE(Logger::info("[RTX-Compatibility-Info] Rasterizing pre-scene UI without closing RTX geometry collection."));
+        return PrepareDrawFlag::PreserveDrawCallAndItsState;
+      }
+      // NV-DXVK end
       // Bind all resources required for this drawcall to context first (i.e. render targets)
       m_parent->PrepareDraw(drawContext.PrimitiveType);
 
       triggerInjectRTX();
 
-      m_rtxInjectTriggered = true;
       return PrepareDrawFlag::PreserveDrawCallAndItsState;
     }
 
@@ -689,6 +732,12 @@ namespace dxvk {
 
     // Fetch all the legacy state (colour modes, alpha test, etc...)
     setLegacyMaterialState(m_parent, m_parent->m_alphaSwizzleRTs & (1 << kRenderTargetIndex), m_activeDrawCallState.materialData);
+
+    // NV-DXVK start: Explicit per-draw effect emission from compatibility mods.
+    m_activeDrawCallState.materialData.effectEmission = decodeEffectEmission(
+      d3d9State().renderStates[kEffectMaterialMarkerState],
+      d3d9State().renderStates[kEffectMaterialEmissionState]);
+    // NV-DXVK end
 
     // Fetch fog state 
     setFogState(m_parent, m_activeDrawCallState.fogState);
@@ -795,6 +844,9 @@ namespace dxvk {
         static_cast<RtxContext*>(ctx)->commitGeometryToRT(params, drawCallState);
       }
     });
+    // NV-DXVK start: UI injection lifetime
+    m_injectionState.commitGeometry();
+    // NV-DXVK end
   }
 
   void D3D9Rtx::submitActiveDrawCallState() {
@@ -1280,7 +1332,9 @@ namespace dxvk {
     });
 
     // Reset for the next frame
-    m_rtxInjectTriggered = false;
+    // NV-DXVK start: UI injection lifetime
+    m_injectionState.reset();
+    // NV-DXVK end
     m_drawCallID = 0;
     m_seenCameraPositionsPrev = std::move(m_seenCameraPositions);
 

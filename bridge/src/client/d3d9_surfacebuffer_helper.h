@@ -49,20 +49,7 @@ static HRESULT copyServerSurfaceRawData(Direct3DSurface9_LSS* const pLssSurface,
     void* pData = NULL;
     size_t pulledSize = DeviceBridge::get_data(&pData);
 
-    // Copy data into a surface
-    const size_t rowSize = bridge_util::calcRowSize(width, (D3DFORMAT) format);
-    const size_t numRows = bridge_util::calcStride(height, (D3DFORMAT) format);
-    assert(pulledSize == numRows * rowSize);
-
-    // Copying server side render target buffer to client surface
-    D3DLOCKED_RECT lockedRect;
-    res = pLssSurface->LockRect(&lockedRect, NULL, D3DLOCK_DISCARD);
-    if (S_OK == res) {
-      FOR_EACH_RECT_ROW(lockedRect, height, format,
-        memcpy(ptr, (PBYTE) pData + y * rowSize, rowSize);
-      );
-      res = pLssSurface->UnlockRect();
-    }
+    res = pLssSurface->receiveReadback(pData, pulledSize, width, height, format);
   }
   DeviceBridge::pop_front();
   return res;

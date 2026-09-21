@@ -121,7 +121,8 @@ struct RtSurface {
     uint16_t flags0 = 0;
     flags0 |= normalFormat == VK_FORMAT_R32_UINT ? 1 : 0;
     flags0 |= isVertexColorBakedLighting ? (1 << 1) : 0;
-    // NOTE: Spare flags bits here
+    flags0 |= static_cast<uint16_t>(worldUiBlendMode) << 2;
+    flags0 |= worldUiAlphaCurveBits;
 
     writeGPUHelper(data, offset, flags0);
 
@@ -339,6 +340,8 @@ struct RtSurface {
   bool isClipPlaneEnabled = false;
   bool isTextureFactorBlend = false;
   bool isVertexColorBakedLighting = true;
+  WorldUiBlendMode worldUiBlendMode = WorldUiBlendMode::Legacy;
+  uint16_t worldUiAlphaCurveBits = 0;
   bool isMotionBlurMaskOut = false;
   bool skipSurfaceInteractionSpritesheetAdjustment = false;
 
@@ -1774,6 +1777,8 @@ enum class MaterialDataType {
 
 // Note: For use with "Legacy" D3D9 material information
 struct LegacyMaterialData {
+  // Negative means inherit. Non-negative selects a lit material with explicit emission.
+  float effectEmission = -1.0f;
   static OpaqueMaterialData createDefault();
 
   LegacyMaterialData()

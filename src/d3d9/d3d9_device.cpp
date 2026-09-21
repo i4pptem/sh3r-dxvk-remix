@@ -2617,7 +2617,8 @@ namespace dxvk {
         cPrimCount = PrimitiveCount,
         cStartVertex = StartVertex,
         cInstanceCount = GetInstanceCount(),
-        cDrawCall = bool( drawPrepare & PrepareDrawFlag::OriginalDrawCall )
+        cDrawCall = bool( drawPrepare & PrepareDrawFlag::OriginalDrawCall ),
+        cUiTextureMask = m_rtx.GetRasterizedUiTextureMask(drawPrepare)
       ](DxvkContext* ctx) {
         auto drawInfo = GenerateDrawInfo(cPrimType, cPrimCount, cInstanceCount);
 
@@ -2625,6 +2626,8 @@ namespace dxvk {
 
         ctx->setPushConstantBank(DxvkPushConstantBank::D3D9);
         if (cDrawCall) {
+          RtxContext::ScopedRasterizedUiTextures uiTextures(*static_cast<RtxContext*>(ctx),
+            computeResourceSlotId(DxsoProgramType::PixelShader, DxsoBindingType::Image, 0), cUiTextureMask);
           ctx->draw(
             drawInfo.vertexCount, drawInfo.instanceCount,
             cStartVertex, 0);
@@ -2672,7 +2675,8 @@ namespace dxvk {
         cStartIndex = StartIndex,
         cBaseVertexIndex = BaseVertexIndex,
         cInstanceCount = GetInstanceCount(),
-        cDrawCall = bool( drawPrepare & PrepareDrawFlag::OriginalDrawCall )
+        cDrawCall = bool( drawPrepare & PrepareDrawFlag::OriginalDrawCall ),
+        cUiTextureMask = m_rtx.GetRasterizedUiTextureMask(drawPrepare)
       ](DxvkContext* ctx) {
         auto drawInfo = GenerateDrawInfo(cPrimType, cPrimCount, cInstanceCount);
 
@@ -2680,6 +2684,8 @@ namespace dxvk {
 
         ctx->setPushConstantBank(DxvkPushConstantBank::D3D9);
         if (cDrawCall) {
+          RtxContext::ScopedRasterizedUiTextures uiTextures(*static_cast<RtxContext*>(ctx),
+            computeResourceSlotId(DxsoProgramType::PixelShader, DxsoBindingType::Image, 0), cUiTextureMask);
           ctx->drawIndexed(
             drawInfo.vertexCount, drawInfo.instanceCount,
             cStartIndex,
@@ -2734,7 +2740,8 @@ namespace dxvk {
         cPrimCount = PrimitiveCount,
         cInstanceCount = GetInstanceCount(),
         cStride = VertexStreamZeroStride,
-        cDrawCall = bool( drawPrepare & PrepareDrawFlag::OriginalDrawCall )
+        cDrawCall = bool( drawPrepare & PrepareDrawFlag::OriginalDrawCall ),
+        cUiTextureMask = m_rtx.GetRasterizedUiTextureMask(drawPrepare)
       ](DxvkContext* ctx) {
         auto drawInfo = GenerateDrawInfo(cPrimType, cPrimCount, cInstanceCount);
 
@@ -2743,6 +2750,8 @@ namespace dxvk {
         ctx->setPushConstantBank(DxvkPushConstantBank::D3D9);
         ctx->bindVertexBuffer(0, cBufferSlice, cStride);
         if (cDrawCall) {
+          RtxContext::ScopedRasterizedUiTextures uiTextures(*static_cast<RtxContext*>(ctx),
+            computeResourceSlotId(DxsoProgramType::PixelShader, DxsoBindingType::Image, 0), cUiTextureMask);
           ctx->draw(drawInfo.vertexCount, drawInfo.instanceCount, 0, 0);
         }
         ctx->bindVertexBuffer(0, DxvkBufferSlice(), 0);
@@ -2812,7 +2821,8 @@ namespace dxvk {
         cStride = VertexStreamZeroStride,
         cInstanceCount = GetInstanceCount(),
         cIndexType = DecodeIndexType(static_cast<D3D9Format>(IndexDataFormat)),
-        cDrawCall = bool( drawPrepare & PrepareDrawFlag::OriginalDrawCall )
+        cDrawCall = bool( drawPrepare & PrepareDrawFlag::OriginalDrawCall ),
+        cUiTextureMask = m_rtx.GetRasterizedUiTextureMask(drawPrepare)
       ](DxvkContext* ctx) {
         auto drawInfo = GenerateDrawInfo(cPrimType, cPrimCount, cInstanceCount);
 
@@ -2821,6 +2831,8 @@ namespace dxvk {
         ctx->bindVertexBuffer(0, cBufferSlice.subSlice(0, cVertexSize), cStride);
         ctx->bindIndexBuffer(cBufferSlice.subSlice(cVertexSize, cBufferSlice.length() - cVertexSize), cIndexType);
         if (cDrawCall) {
+          RtxContext::ScopedRasterizedUiTextures uiTextures(*static_cast<RtxContext*>(ctx),
+            computeResourceSlotId(DxsoProgramType::PixelShader, DxsoBindingType::Image, 0), cUiTextureMask);
           ctx->drawIndexed(drawInfo.vertexCount, drawInfo.instanceCount, 0, 0, 0);
         }
         ctx->bindVertexBuffer(0, DxvkBufferSlice(), 0);

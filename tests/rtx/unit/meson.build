@@ -30,6 +30,14 @@ foreach external_dll : external_dll_paths
 endforeach
 
 tests = []
+exe = executable('test_rasterized_ui_policy', files('test_rasterized_ui_policy.cpp'), win_subsystem : 'console', override_options: ['cpp_std='+dxvk_cpp_std])
+test('test_rasterized_ui_policy', exe, env: test_env)
+tests += exe
+
+exe = executable('test_rtx_injection_state', files('test_rtx_injection_state.cpp'), win_subsystem : 'console', override_options: ['cpp_std='+dxvk_cpp_std])
+test('test_rtx_injection_state', exe, env: test_env)
+tests += exe
+
 exe = executable('fastop_minmax',  files('test_fastop_minmax.cpp'),  dependencies : test_unit_deps, win_subsystem : 'console', override_options: ['cpp_std='+dxvk_cpp_std])
 test('fastop_minmax', exe, env: test_env)
 tests += exe

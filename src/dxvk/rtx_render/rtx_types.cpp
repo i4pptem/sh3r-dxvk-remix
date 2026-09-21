@@ -409,6 +409,10 @@ namespace dxvk {
 
     setCategory(InstanceCategories::ParticleEmitter, lookupHash(RtxOptions::particleEmitterTextures(), textureHash));
     setCategory(InstanceCategories::HairCards, lookupHash(RtxOptions::hairCardTextures(), textureHash));
+    if (materialData.effectEmission >= 0.0f) {
+      removeCategory(InstanceCategories::WorldUI);
+      removeCategory(InstanceCategories::WorldMatte);
+    }
   }
 
   void DrawCallState::setupCategoriesForGeometry() {

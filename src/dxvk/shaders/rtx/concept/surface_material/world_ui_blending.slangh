@@ -1,0 +1,76 @@
+#pragma once
+
+#include "rtx/concept/surface/surface_shared.h"
+
+float worldUiShapeTextureAlpha(float sampledAlpha, float exponent)
+{
+  return exponent == 1.0f ? sampledAlpha : pow(saturate(sampledAlpha), exponent);
+}
+
+bool worldUiAlphaTest(float alpha, AlphaTestType comparison, float reference)
+{
+  switch (comparison)
+  {
+  case AlphaTestType::kNever: return false;
+  case AlphaTestType::kLess: return alpha < reference;
+  case AlphaTestType::kEqual: return alpha == reference;
+  case AlphaTestType::kLessOrEqual: return alpha <= reference;
+  case AlphaTestType::kGreater: return alpha > reference;
+  case AlphaTestType::kNotEqual: return alpha != reference;
+  case AlphaTestType::kGreaterOrEqual: return alpha >= reference;
+  default: return true;
+  }
+}
+
+// RGB is premultiplied emission; A is background transmittance.
+vec4 worldUiBlendLayer(WorldUiBlendMode mode, vec3 color, float alpha, bool passesAlphaTest)
+{
+  if (!passesAlphaTest)
+  {
+    return vec4(0.0f, 0.0f, 0.0f, 1.0f);
+  }
+  const float sourceFactor = mode == WorldUiBlendMode::Add ? 1.0f : saturate(alpha);
+  const float transmission = mode == WorldUiBlendMode::Alpha ? 1.0f - saturate(alpha) : 1.0f;
+  return vec4(color * sourceFactor, transmission);
+}
+
+// WBOIT approximates the order of alpha layers. Additive layers carry no extinction.
+struct WorldUiAccumulator
+{
+  vec3 additive;
+  vec3 alphaColor;
+  float alphaWeight;
+  float transmission;
+
+#ifndef __cplusplus
+  [mutating]
+#endif
+  void accumulate(WorldUiBlendMode mode, vec3 premultipliedColor, float transmittance, float weight)
+  {
+    if (mode == WorldUiBlendMode::Alpha)
+    {
+      alphaColor += premultipliedColor * weight;
+      alphaWeight += (1.0f - transmittance) * weight;
+      transmission *= transmittance;
+    }
+    else
+    {
+      additive += premultipliedColor;
+    }
+  }
+
+  vec3 radiance()
+  {
+    return additive + (alphaWeight > 0.0f ? alphaColor * ((1.0f - transmission) / alphaWeight) : vec3(0.0f));
+  }
+};
+
+WorldUiAccumulator worldUiAccumulatorCreate()
+{
+  WorldUiAccumulator result;
+  result.additive = vec3(0.0f);
+  result.alphaColor = vec3(0.0f);
+  result.alphaWeight = 0.0f;
+  result.transmission = 1.0f;
+  return result;
+}

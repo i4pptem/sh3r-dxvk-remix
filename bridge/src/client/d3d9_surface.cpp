@@ -122,28 +122,50 @@ HRESULT Direct3DSurface9_LSS::GetDesc(D3DSURFACE_DESC* pDesc) {
 
 HRESULT Direct3DSurface9_LSS::LockRect(D3DLOCKED_RECT* pLockedRect, CONST RECT* pRect, DWORD Flags) {
   LogFunctionCall();
-  // Store locked rect pointer locally so we can copy the data on unlock
-  {
-    BRIDGE_PARENT_DEVICE_LOCKGUARD();
-    if (!lock(*pLockedRect, pRect, Flags)) {
-      std::stringstream ss;
-      ss << "[Direct3DSurface9_LSS][LockRect] Failed!";
-      Logger::err(ss.str());
-      return E_FAIL;
-    }
+  if (!pLockedRect) {
+    return D3DERR_INVALIDCALL;
   }
 
-  // We send LockRect() calls to server in cases wherein backbuffer is used to capture the screenshot
-  if (m_isBackBuffer && ClientOptions::getEnableBackbufferCapture() && !(Flags & D3DLOCK_DISCARD)) {
+  // GPU render targets have no current client shadow until the server reads them back.
+  // Publish pBits only after readback so its allocation is stable for the public lock's lifetime.
+  const bool gpuReadback = m_isBackBuffer ? ClientOptions::getEnableBackbufferCapture()
+    : (m_desc.Pool == D3DPOOL_DEFAULT && (m_desc.Usage & D3DUSAGE_RENDERTARGET) != 0);
+  if (gpuReadback && !(Flags & D3DLOCK_DISCARD)) {
     UID currentUID;
     {
       ClientMessage c(Commands::IDirect3DSurface9_LockRect, getId());
       currentUID = c.get_uid();
     }
 
-    return copyServerSurfaceRawData(this, currentUID);
+    const HRESULT result = copyServerSurfaceRawData(this, currentUID);
+    if (FAILED(result)) {
+      return result;
+    }
   }
 
+  BRIDGE_PARENT_DEVICE_LOCKGUARD();
+  if (!lock(*pLockedRect, pRect, Flags)) {
+    Logger::err("[Direct3DSurface9_LSS][LockRect] Failed!");
+    return E_FAIL;
+  }
+
+  return S_OK;
+}
+
+HRESULT Direct3DSurface9_LSS::receiveReadback(const void* data, size_t size,
+                                            UINT width, UINT height, D3DFORMAT format) {
+  BRIDGE_PARENT_DEVICE_LOCKGUARD();
+  if (!data || width != m_desc.Width || height != m_desc.Height || format != m_desc.Format
+      || size != bridge_util::calcTotalSizeOfRect(width, height, format) || !m_lockInfoQueue.empty()) {
+    return D3DERR_INVALIDCALL;
+  }
+  D3DLOCKED_RECT fullSurface;
+  if (!lock(fullSurface, nullptr, D3DLOCK_READONLY)) {
+    return E_OUTOFMEMORY;
+  }
+  // The client shadow uses the same packed row layout as the readback payload.
+  memcpy(fullSurface.pBits, data, size);
+  unlock(); // CPU coherence only; READONLY prevents a redundant GPU upload.
   return S_OK;
 }
 

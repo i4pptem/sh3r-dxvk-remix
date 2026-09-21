@@ -706,7 +706,7 @@ namespace dxvk {
   bool OpacityMicromapManager::usesOpacityMicromap(const RtInstance& instance) {
     const OpacityMicromapInstanceData& ommInstanceData = instance.getOpacityMicromapInstanceData();
 
-    return ommInstanceData.usesOMM;
+    return instance.surface.worldUiBlendMode == WorldUiBlendMode::Legacy && ommInstanceData.usesOMM;
   }
 
   bool OpacityMicromapManager::usesSplitBillboardOpacityMicromap(const RtInstance& instance) {
@@ -1003,6 +1003,9 @@ namespace dxvk {
   }
 
   bool OpacityMicromapManager::calculateInstanceUsesOpacityMicromap(const RtInstance& instance) {
+    if (instance.surface.worldUiBlendMode != WorldUiBlendMode::Legacy) {
+      return false;
+    }
     // Texcoord data is required
     if (instance.getTexcoordHash() == kEmptyHash ||
         // Texgen mode check excludes baked terrain as well

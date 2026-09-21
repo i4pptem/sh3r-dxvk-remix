@@ -225,6 +225,7 @@ dxvk_src = files([
   'rtx_render/rtx_draw_call_tracker.h',
   'rtx_render/rtx_dust_particles.cpp',
   'rtx_render/rtx_dust_particles.h',
+  'rtx_render/rtx_effect_material.h',
   'rtx_render/rtx_env.cpp',
   'rtx_render/rtx_env.h',
   'rtx_render/rtx_file_watch.cpp',
@@ -352,6 +353,7 @@ dxvk_src = files([
   'rtx_render/rtx_types.cpp',
   'rtx_render/rtx_types.h',
   'rtx_render/rtx_utils.h',
+  'rtx_render/rtx_world_ui_alpha_curves.h',
   'rtx_render/rtx_xess.cpp',
   'rtx_render/rtx_xess.h',
 

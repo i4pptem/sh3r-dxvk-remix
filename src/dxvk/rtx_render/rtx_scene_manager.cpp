@@ -781,6 +781,7 @@ namespace dxvk {
 
     const bool usePreservePath =
         RtxOptions::enablePreservePath() &&
+        !(InstanceManager::explicitBlendModes() && input.getCategoryFlags().test(InstanceCategories::WorldUI)) &&
         !replacementInstance->prims.empty() &&
         replacementInstance->dirtyFlags.isClear() &&
         !RtxOptionManager::isDrawcallTranslationInvalid() &&

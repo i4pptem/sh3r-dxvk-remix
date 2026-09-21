@@ -38,7 +38,7 @@ args = parser.parse_args()
 # Set to True to generate Slang repro file when compiling shaders
 generateSlangRepro = False
 
-includePaths = ' '.join([f'-I{path}' for path in args.includes])
+includePaths = [f'-I{path}' for path in args.includes]
 slangDll = os.path.join(os.path.dirname(args.slangc), 'slang.dll')
 
 tools = [args.glslang, args.slangc, slangDll, __file__]
@@ -112,12 +112,12 @@ class Task:
             #print(command)
             timeStart = time.time()
 
-            process = subprocess.Popen(command, shell = True, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+            process = subprocess.Popen(command, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
             out, err = process.communicate()
 
             duration = time.time() - timeStart
 
-            commandName = os.path.basename(command.split(' ')[0])
+            commandName = os.path.basename(command[0])
             printFromThread(f'[{duration:5.2f}s] {commandName}: {self.getName()}')
 
             combinedOutput = (out + err).decode("utf-8").strip()
@@ -204,10 +204,10 @@ def createGlslangTask(inputFile):
     destFile = os.path.join(args.output, shaderName + destExtension)
     depFile = os.path.join(args.output, shaderName + ".d")
     task = createBasicTask(inputFile, destFile, destFile, depFile)
-    variableName = '' if args.binary else f'--vn {shaderName}'
+    variableName = [] if args.binary else ['--vn', shaderName]
 
-    command = f'{args.glslang} {glslangFlags} {includePaths} -V {variableName} -o {destFile} ' \
-            + f'--depfile {depFile} {inputFile}'
+    command = [args.glslang, *glslangFlags.split(), *includePaths, '-V', *variableName,
+               '-o', destFile, '--depfile', depFile, inputFile]
     task.commands = [command]
     return task
 
@@ -218,7 +218,7 @@ def createSlangTask(inputFile, variantSpec):
     inputName, inputType = os.path.splitext(getShaderName(inputFile))
     variantName, variantType = os.path.splitext(variantSpec[0])
 
-    variantDefines = ' '.join([f'-D{x}' for x in variantSpec[1:]])
+    variantDefines = [f'-D{x}' for x in variantSpec[1:]]
     destFile = os.path.join(args.output, variantName + ".spv")
     headerFile = os.path.join(args.output, variantName + ".h")
     depFile = os.path.join(args.output, variantName + ".d")
@@ -229,23 +229,22 @@ def createSlangTask(inputFile, variantSpec):
     if variantName != inputName:
         task.customName = f'{os.path.basename(inputFile)} ({variantName})'
 
-    command1 = f'{args.slangc} -entry main -target spirv -zero-initialize -emit-spirv-directly -verbose-paths {includePaths} ' \
-            + f'-depfile {depFile} {inputFile} -D__SLANG__ {variantDefines} ' \
-            + f'-matrix-layout-column-major ' \
-            + f'-Wno-30081 '
+    command1 = [args.slangc, '-entry', 'main', '-target', 'spirv', '-zero-initialize',
+                '-emit-spirv-directly', '-verbose-paths', *includePaths, '-depfile', depFile,
+                inputFile, '-D__SLANG__', *variantDefines, '-matrix-layout-column-major', '-Wno-30081']
 
     # Add SER capability only for variants that use Shader Execution Reordering
     if 'RT_SHADER_EXECUTION_REORDERING' in variantSpec:
-        command1 += f'-capability spvShaderInvocationReorderNV '
+        command1 += ['-capability', 'spvShaderInvocationReorderNV']
 
     # Force scalar block layout in shaders - buffers are required to be aligned as such by Neural Radiance Cache
-    command1 += f'-fvk-use-scalar-layout '
+    command1 += ['-fvk-use-scalar-layout']
 
     if generateSlangRepro:
       reproFile = os.path.join(args.output, variantName + ".slangRepro")
-      command1 += f'-dump-repro {reproFile}'
+      command1 += ['-dump-repro', reproFile]
 
-    command1 += f'-o {destFile}'
+    command1 += ['-o', destFile]
 
     # -binary switch just writes the SPV binary
     if args.binary:
@@ -257,7 +256,7 @@ def createSlangTask(inputFile, variantSpec):
         # Command to convert SPV into c array header
         script_dir = os.path.dirname(os.path.realpath(__file__))
         shader_xxd = os.path.join(script_dir, 'shader_xxd.py')
-        command2 = f'"{sys.executable}" {shader_xxd} -i {destFile} -o {headerFile}'
+        command2 = [sys.executable, shader_xxd, '-i', destFile, '-o', headerFile]
 
         task.commands = [command1, command2]
 

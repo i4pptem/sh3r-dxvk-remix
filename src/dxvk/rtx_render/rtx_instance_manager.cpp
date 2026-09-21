@@ -1001,6 +1001,42 @@ namespace dxvk {
     m_pResourceCache->find(material, instance.surface.surfaceMaterialIndex);
   }
 
+  float InstanceManager::getWorldUiAlphaCurve(const DrawCallState& drawCall) {
+    const auto& config = textureAlphaCurves();
+    if (config != m_worldUiAlphaCurveConfig) {
+      m_worldUiAlphaCurveConfig = config;
+      if (!m_worldUiAlphaCurves.parse(config)) {
+        Logger::warn("Invalid rtx.worldUi.textureAlphaCurves; using identity alpha curves.");
+      }
+    }
+    return m_worldUiAlphaCurves.lookup(drawCall.getMaterialData().getColorTexture().getImageHash());
+  }
+
+  static WorldUiBlendMode getWorldUiBlendMode(const DrawCallState& drawCall, const MaterialData& materialData) {
+    if (drawCall.getMaterialData().effectEmission >= 0.0f ||
+        !InstanceManager::explicitBlendModes() || !drawCall.testCategoryFlags(InstanceCategories::WorldUI) ||
+        materialData.getType() != MaterialDataType::Opaque || !materialData.getOpaqueMaterialData().getUseLegacyAlphaState() ||
+        drawCall.testCategoryFlags(InstanceCategories::AlphaBlendToCutout) || drawCall.testCategoryFlags(InstanceCategories::HairCards)) {
+      return WorldUiBlendMode::Legacy;
+    }
+    const auto& blend = drawCall.getMaterialData().blendMode;
+    if (!blend.enableBlending || blend.colorBlendOp != VK_BLEND_OP_ADD) {
+      return WorldUiBlendMode::Legacy;
+    }
+    if (blend.colorSrcFactor == VK_BLEND_FACTOR_SRC_ALPHA) {
+      if (blend.colorDstFactor == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA) {
+        return WorldUiBlendMode::Alpha;
+      }
+      if (blend.colorDstFactor == VK_BLEND_FACTOR_ONE) {
+        return WorldUiBlendMode::AlphaAdd;
+      }
+    }
+    if (blend.colorSrcFactor == VK_BLEND_FACTOR_ONE && blend.colorDstFactor == VK_BLEND_FACTOR_ONE) {
+      return WorldUiBlendMode::Add;
+    }
+    return WorldUiBlendMode::Legacy;
+  }
+
   // Updates the state of the instance with the draw call inputs
   // It handles multiple draw calls called for a same instance within a frame
   // To be called on every draw call
@@ -1015,12 +1051,20 @@ namespace dxvk {
     const uint32_t previousInstanceShaderBindingTableRecordOffset = currentInstance.m_vkInstance.instanceShaderBindingTableRecordOffset;
     const VkGeometryInstanceFlagsKHR previousInstanceFlags = currentInstance.m_vkInstance.flags;
     const bool previousUsesUnorderedApproximations = currentInstance.m_isUnordered;
+    const auto previousWorldUiBlendMode = currentInstance.surface.worldUiBlendMode;
     const bool previousIsSubsurface = currentInstance.m_isSubsurface;
     const VkGeometryFlagsKHR previousGeometryFlags = currentInstance.m_geometryFlags;
     const auto previousInstancesToObject = currentInstance.surface.instancesToObject;
     const size_t previousInstancesToObjectSize = previousInstancesToObject ? previousInstancesToObject->size() : 0;
 
     currentInstance.m_categoryFlags = drawCall.getCategoryFlags();
+    const float effectEmission = drawCall.getMaterialData().effectEmission;
+    if (effectEmission >= 0.0f) {
+      currentInstance.m_categoryFlags.clr(InstanceCategories::WorldUI);
+      currentInstance.m_categoryFlags.clr(InstanceCategories::WorldMatte);
+    }
+    // Material callbacks below consume this copy through the end of updateInstance().
+    MaterialData tmpMaterialData;
     currentInstance.surface.instancesToObject = drawCall.getTransformData().instancesToObject;
 
     // setFrameLastUpdated() must be called first as it resets instance's state on a first call in a frame
@@ -1089,6 +1133,13 @@ namespace dxvk {
         currentInstance.surface.texgenMode = drawCall.getTransformData().texgenMode; // NOTE: Make it material data...
         currentInstance.surface.tFactor = drawCall.getMaterialData().tFactor;
         currentInstance.surface.alphaState = alphaState;
+        currentInstance.surface.worldUiBlendMode = getWorldUiBlendMode(drawCall, *materialData);
+        currentInstance.surface.worldUiAlphaCurveBits = static_cast<uint16_t>(packWorldUiAlphaExponent(
+          currentInstance.surface.worldUiBlendMode == WorldUiBlendMode::Alpha ||
+          currentInstance.surface.worldUiBlendMode == WorldUiBlendMode::AlphaAdd ? getWorldUiAlphaCurve(drawCall) : 1.0f));
+        if (currentInstance.surface.worldUiBlendMode != WorldUiBlendMode::Legacy) {
+          currentInstance.surface.alphaState.isFullyOpaque = false;
+        }
         currentInstance.surface.isAnimatedWater = currentInstance.testCategoryFlags(InstanceCategories::AnimatedWater);
         currentInstance.surface.associatedGeometryHash = drawCall.getHash(RtxOptions::geometryAssetHashRule());
         currentInstance.surface.isTextureFactorBlend = drawCall.getMaterialData().isTextureFactorBlend;
@@ -1115,14 +1166,19 @@ namespace dxvk {
         currentInstance.m_isAnimated = currentInstance.surface.spriteSheetFPS != 0;
         currentInstance.surface.objectPickingValue = drawCall.drawCallID;
 
-        // Temp storage for the case we need to patch the material data
-        MaterialData tmpMaterialData;
-
         if (materialData->getType() == MaterialDataType::Opaque)
         {
           const bool useLegacyAlphaState = materialData->getOpaqueMaterialData().getUseLegacyAlphaState();
 
-          if (currentInstance.m_isWorldSpaceUI) {
+          if (effectEmission >= 0.0f) {
+            tmpMaterialData = *materialData;
+            materialData = &tmpMaterialData;
+            auto& opaque = tmpMaterialData.getOpaqueMaterialData();
+            opaque.setEnableEmission(effectEmission > 0.0f);
+            opaque.setEmissiveIntensity(effectEmission);
+            opaque.setEmissiveColorConstant(Vector3(1.0f));
+            opaque.setEmissiveColorTexture(opaque.getAlbedoOpacityTexture());
+          } else if (currentInstance.m_isWorldSpaceUI) {
             // Here we need to do deep copy and patch the material
             tmpMaterialData = *materialData;
             materialData = &tmpMaterialData;
@@ -1219,7 +1275,10 @@ namespace dxvk {
     }
 
     // Update the geometry and instance flags
-    if (currentInstance.isOpaque() && drawCall.isUsingRaytracedRenderTarget) {
+    if (previousWorldUiBlendMode != WorldUiBlendMode::Legacy || currentInstance.surface.worldUiBlendMode != WorldUiBlendMode::Legacy) {
+      currentInstance.m_isUnordered = false;
+    }
+    if (currentInstance.isOpaque() && drawCall.isUsingRaytracedRenderTarget && currentInstance.surface.worldUiBlendMode == WorldUiBlendMode::Legacy) {
       // render target texture - need this to be in the opaque pass, even if alphaState.isFullyOpaque is false.
       currentInstance.m_geometryFlags = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
     } else if (
@@ -1229,7 +1288,8 @@ namespace dxvk {
       // suitable geometry outside of the player model, but we don't have a way to distinguish it from alpha blended geometry
       // that should be alpha tested instead, like some metallic stairs in Portal -- those should be resolved normally.
       (!currentInstance.surface.alphaState.isFullyOpaque && !currentInstance.surface.alphaState.isBlendingDisabled && currentInstance.m_isPlayerModel) ||
-      currentInstance.surface.alphaState.emissiveBlend
+      currentInstance.surface.alphaState.emissiveBlend ||
+      currentInstance.surface.worldUiBlendMode != WorldUiBlendMode::Legacy
     ) {
       // Alpha-blended and emissive particles go to the separate "unordered" TLAS as non-opaque geometry
       currentInstance.m_geometryFlags = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
@@ -1330,6 +1390,7 @@ namespace dxvk {
       previousInstanceShaderBindingTableRecordOffset != currentInstance.m_vkInstance.instanceShaderBindingTableRecordOffset ||
       previousInstanceFlags != currentInstance.m_vkInstance.flags ||
       previousUsesUnorderedApproximations != currentInstance.m_isUnordered ||
+      previousWorldUiBlendMode != currentInstance.surface.worldUiBlendMode ||
       previousIsSubsurface != currentInstance.m_isSubsurface ||
       previousGeometryFlags != currentInstance.m_geometryFlags ||
       previousInstancesToObject.get() != currentInstancesToObject.get() ||
